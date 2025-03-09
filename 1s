@@ -1,0 +1,60 @@
+local modem = peripheral.find("modem")
+if not modem then
+    error("No wired modem found! Ensure a wired modem is attached.", 0)
+end
+
+rednet.open(peripheral.getName(modem))
+
+local fps = 5
+local frameInterval = 1000 / fps  -- 200 ms per frame in milliseconds
+local frameIndex = 1
+
+print("Scheduler is waiting for a redstone signal to start playback...")
+
+-- **Wait for a redstone signal on any side**
+while true do
+    local hasSignal = false
+    for _, side in ipairs({"top", "bottom", "left", "right", "front", "back"}) do
+        if redstone.getInput(side) then
+            hasSignal = true
+            break
+        end
+    end
+
+    if hasSignal then
+        print("Redstone signal detected! Synchronizing players...")
+        break
+    end
+    os.sleep(0.1)  -- Check every 100ms to reduce CPU usage
+end
+
+local globalStartTime = os.epoch("utc") + 2000  -- 2-second delay before playback starts
+
+-- **Broadcast sync message to all players**
+rednet.broadcast({type="sync", time=globalStartTime})
+print("Sync message sent. Playback starts in 2 seconds.")
+os.sleep(2)
+
+local nextFrameTime = os.epoch("utc")
+
+while true do
+    local currentTime = os.epoch("utc")
+    local timeUntilNextFrame = nextFrameTime - currentTime
+
+    if timeUntilNextFrame <= 0 then
+        -- **Broadcast frame update to all players**
+        rednet.broadcast({type="frame", index=frameIndex})
+        print("Sent frame:", frameIndex)
+
+        frameIndex = frameIndex + 1
+        nextFrameTime = nextFrameTime + frameInterval  -- Schedule next frame
+
+        -- **Compensation for frame drift**
+        if os.epoch("utc") > nextFrameTime + frameInterval then
+            print("[Warning] Frame drift detected, resyncing...")
+            nextFrameTime = os.epoch("utc") + frameInterval
+        end
+    else
+        os.sleep(timeUntilNextFrame / 1000)  -- Convert ms to seconds
+    end
+end
