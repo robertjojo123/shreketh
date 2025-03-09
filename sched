@@ -1,0 +1,47 @@
+local players = { "comp0", "comp1", "comp2", "comp3" } -- The four player computers' labels
+local fps = 5
+local frameInterval = 1 / fps  -- Time per frame in seconds
+local extendedTime = frameInterval + 0.01  -- Small buffer time
+
+-- **Find and open a wired modem automatically**
+local modem = peripheral.find("modem")
+if not modem then
+    error("No wired modem found! Ensure a wired modem is attached.", 0)
+end
+rednet.open(peripheral.getName(modem))
+
+-- **Sync all computers with a start time**
+local function syncStartTime()
+    local startTime = os.epoch("utc") + 2000  -- Give 2s buffer for all to receive
+    for _, id in ipairs(players) do
+        local compID = rednet.lookup("player", id)  -- Get computer ID by label
+        if compID then
+            rednet.send(compID, { type = "sync", time = startTime })
+        end
+    end
+    return startTime
+end
+
+local startTime = syncStartTime()
+local frameIndex = 1
+local playerIndex = 1  -- Keep track of which computer is displaying
+
+while true do
+    local now = os.epoch("utc")
+    local nextFrameTime = startTime + (frameIndex * extendedTime * 1000)  -- Use extended time
+
+    -- **Ensure exact frame timing**
+    while os.epoch("utc") < nextFrameTime do
+        os.sleep(0.01)
+    end
+
+    -- **Send frame command directly to the correct computer**
+    local compID = rednet.lookup("player", players[playerIndex])
+    if compID then
+        rednet.send(compID, { type = "frame", index = frameIndex })
+    end
+
+    -- **Move to the next player**
+    playerIndex = (playerIndex % #players) + 1
+    frameIndex = frameIndex + 1
+end
