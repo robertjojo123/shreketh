@@ -1,0 +1,92 @@
+local modem = peripheral.find("modem")
+local monitor = peripheral.find("monitor")
+
+if not modem then
+    error("No wired modem found! Ensure a wired modem is attached.", 0)
+end
+if not monitor then
+    error("Attach a monitor!", 0)
+end
+
+rednet.open(peripheral.getName(modem))
+
+local quadrant = tonumber(os.getComputerLabel():match("%d"))
+if quadrant == nil then
+    error("Label computer as 'comp0', 'comp1', 'comp2', or 'comp3'", 0)
+end
+
+local fps = 5
+local frameInterval = 1 / fps
+local extendedDisplayTime = frameInterval + 0.01  -- Extra time to avoid cutoffs
+local globalStartTime = nil
+local preloadedFrame = nil
+local previousFrame = {}
+
+-- **Fast rendering function using term.blit()**
+local function drawFast(frameData)
+    term.redirect(monitor)
+    local width, height = monitor.getSize()
+
+    for y = 1, height do
+        if frameData[y] then
+            term.setCursorPos(1, y)
+            term.blit(frameData[y][1], frameData[y][2], frameData[y][3])
+        end
+    end
+    term.redirect(term.native())
+end
+
+-- **Preloads next frame off-screen**
+local function preloadFrame(frameIndex)
+    local videoFile = string.format("video_part_%d_q%d.nfv", math.ceil(frameIndex / 20), quadrant)
+    if fs.exists(videoFile) then
+        local videoData = fs.open(videoFile, "r").readAll():split("\n")
+        table.remove(videoData, 1)  -- Remove resolution header
+
+        local frameData = {}
+        for y = 1, #videoData do
+            local text, fg, bg = videoData[y]:match("(.*);(.*);(.*)")
+            if text and fg and bg then
+                frameData[y] = { text, fg, bg }
+            end
+        end
+        preloadedFrame = frameData
+    else
+        preloadedFrame = nil
+    end
+end
+
+-- **Wait for synchronization from the scheduler**
+print("Waiting for sync...")
+while true do
+    local sender, msg = rednet.receive()
+    if msg.type == "sync" then
+        globalStartTime = msg.time
+        break
+    end
+end
+
+print("Synchronized! Starting playback...")
+os.sleep((globalStartTime - os.epoch("utc")) / 1000)
+
+-- **Main loop for frame playback**
+while true do
+    local sender, msg = rednet.receive()
+    if msg.type == "frame" then
+        local frameStartTime = os.epoch("utc")
+
+        -- **Render preloaded frame instantly**
+        if preloadedFrame then
+            drawFast(preloadedFrame)
+            previousFrame = preloadedFrame  -- Store last displayed frame
+        end
+
+        -- **Preload next frame while this one is displaying**
+        preloadFrame(msg.index + 4)
+
+        -- **Wait slightly longer than the frame interval**
+        local elapsedTime = os.epoch("utc") - frameStartTime
+        local sleepTime = (extendedDisplayTime - (elapsedTime / 1000))
+        if sleepTime > 0 then os.sleep(sleepTime) end
+    end
+end
